@@ -22,45 +22,47 @@
 
 package dgca.verifier.app.android.data
 
+import android.content.Context
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
+import com.fasterxml.jackson.core.type.TypeReference
+import com.fasterxml.jackson.databind.ObjectMapper
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dgca.verifier.app.android.data.local.AppDatabase
 import dgca.verifier.app.android.data.local.Key
 import dgca.verifier.app.android.data.local.Preferences
-import dgca.verifier.app.android.data.remote.ApiService
 import dgca.verifier.app.android.security.KeyStoreCryptor
 import dgca.verifier.app.decoder.base64ToX509Certificate
 import dgca.verifier.app.decoder.toBase64
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
-import java.net.HttpURLConnection
+import java.io.File
 import java.security.MessageDigest
 import java.security.cert.Certificate
 import javax.inject.Inject
 
 class VerifierRepositoryImpl @Inject constructor(
-    private val apiService: ApiService,
+    @ApplicationContext private val context: Context,
     private val preferences: Preferences,
     private val db: AppDatabase,
-    private val keyStoreCryptor: KeyStoreCryptor
+    private val keyStoreCryptor: KeyStoreCryptor,
+    private val objectMapper: ObjectMapper
 ) : BaseRepository(), VerifierRepository {
 
-    private val validCertList = mutableListOf<String>()
     private val mutex = Mutex()
-    private val lastSyncLiveData: MutableLiveData<Long> = MutableLiveData(preferences.lastKeysSyncTimeMillis)
+    private val lastSyncLiveData: MutableLiveData<Long> =
+        MutableLiveData(preferences.lastKeysSyncTimeMillis)
+
+    companion object {
+        const val CERTIFICATE_FILE: String = "certificates.json"
+    }
 
     override suspend fun fetchCertificates(statusUrl: String, updateUrl: String): Boolean? {
         mutex.withLock {
             return execute {
-                val response = apiService.getCertStatus(statusUrl)
-                val body = response.body() ?: return@execute false
-                validCertList.clear()
-                validCertList.addAll(body)
-
-                val resumeToken = preferences.resumeToken
-                fetchCertificate(updateUrl, resumeToken)
-                db.keyDao().deleteAllExcept(validCertList.toTypedArray())
+                db.keyDao().deleteAll()
+                fetchCertificates()
                 preferences.lastKeysSyncTimeMillis = System.currentTimeMillis()
                 lastSyncLiveData.postValue(preferences.lastKeysSyncTimeMillis)
                 return@execute true
@@ -70,33 +72,30 @@ class VerifierRepositoryImpl @Inject constructor(
 
     override suspend fun getCertificatesBy(kid: String): List<Certificate> =
         db.keyDao().getByKid(kid).map {
+            Timber.d("pubKey: ${keyStoreCryptor.decrypt(it.key)}")
             keyStoreCryptor.decrypt(it.key)?.base64ToX509Certificate()!!
         }
 
     override fun getLastSyncTimeMillis(): LiveData<Long> = lastSyncLiveData
 
-    private suspend fun fetchCertificate(url: String, resumeToken: Long) {
-        val tokenFormatted = if (resumeToken == -1L) "" else resumeToken.toString()
-        val response = apiService.getCertUpdate(tokenFormatted, url)
+    private fun certificateFile(): File = File(context.filesDir, CERTIFICATE_FILE)
 
-        if (response.isSuccessful && response.code() == HttpURLConnection.HTTP_OK) {
-            val headers = response.headers()
-            val responseKid = headers[HEADER_KID]
-            val newResumeToken = headers[HEADER_RESUME_TOKEN]
-            val responseStr = response.body()?.stringSuspending() ?: return
+    private fun loadCertificates(): Map<String, String> =
+        context.assets.open(CERTIFICATE_FILE).bufferedReader().use {
+            objectMapper.readValue(
+                it.readText(),
+                object : TypeReference<HashMap<String, String>>() {})
+        }
 
-            if (validCertList.contains(responseKid) && isKidValid(responseKid, responseStr)) {
-                Timber.d("Cert KID verified")
-                val key = Key(kid = responseKid!!, key = keyStoreCryptor.encrypt(responseStr)!!)
-                db.keyDao().insert(key)
+    private fun fetchCertificates() {
+        val certificates = loadCertificates()
 
-                preferences.resumeToken = resumeToken
+        for (entry in certificates.entries) {
+            val kid = entry.key
+            val pubKey = entry.value
 
-                newResumeToken?.let {
-                    val newToken = it.toLong()
-                    fetchCertificate(url, newToken)
-                }
-            }
+            val key = Key(kid = kid, key = keyStoreCryptor.encrypt(pubKey)!!)
+            db.keyDao().insert(key)
         }
     }
 
@@ -112,10 +111,5 @@ class VerifierRepositoryImpl @Inject constructor(
         return responseKid == certKid
     }
 
-    companion object {
-
-        const val HEADER_KID = "x-kid"
-        const val HEADER_RESUME_TOKEN = "x-resume-token"
-    }
 }
 
