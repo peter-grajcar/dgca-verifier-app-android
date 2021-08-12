@@ -40,12 +40,14 @@ import retrofit2.Retrofit
 import retrofit2.converter.jackson.JacksonConverterFactory
 import java.net.URL
 import java.util.concurrent.TimeUnit
+import javax.inject.Named
 import javax.inject.Provider
 import javax.inject.Singleton
 
 private const val CONNECT_TIMEOUT = 30L
 
 const val BASE_URL = "https://dgca-verifier-service.cfapps.eu10.hana.ondemand.com/"
+const val GREENCHECK_API_BASE_URL = "https://greencheck.gv.at/api/";
 const val SHA256_PREFIX = "sha256/"
 
 @InstallIn(SingletonComponent::class)
@@ -102,8 +104,21 @@ object NetworkModule {
 
     @Singleton
     @Provides
-    internal fun provideRetrofit(converterFactory: Converter.Factory, okHttpClient: Provider<OkHttpClient>): Retrofit {
+    internal fun provideRetrofit(
+        converterFactory: Converter.Factory,
+        okHttpClient: Provider<OkHttpClient>
+    ): Retrofit {
         return createRetrofit(converterFactory, okHttpClient)
+    }
+
+    @Singleton
+    @Provides
+    @Named("GreenCheck")
+    internal fun provideGreenCheckRetrofit(
+        converterFactory: Converter.Factory,
+        okHttpClient: Provider<OkHttpClient>
+    ): Retrofit {
+        return createGreenCheckRetrofit(converterFactory, okHttpClient)
     }
 
     @Singleton
@@ -134,12 +149,27 @@ object NetworkModule {
 
     @Singleton
     @Provides
-    internal fun provideConverterFactory(objectMapper: ObjectMapper): Converter.Factory = JacksonConverterFactory.create(objectMapper)
+    internal fun provideConverterFactory(objectMapper: ObjectMapper): Converter.Factory =
+        JacksonConverterFactory.create(objectMapper)
 
-    private fun createRetrofit(converterFactory: Converter.Factory, okHttpClient: Provider<OkHttpClient>): Retrofit {
+    private fun createRetrofit(
+        converterFactory: Converter.Factory,
+        okHttpClient: Provider<OkHttpClient>
+    ): Retrofit {
         return Retrofit.Builder()
             .addConverterFactory(converterFactory)
             .baseUrl(BASE_URL)
+            .callFactory { okHttpClient.get().newCall(it) }
+            .build()
+    }
+
+    private fun createGreenCheckRetrofit(
+        converterFactory: Converter.Factory,
+        okHttpClient: Provider<OkHttpClient>
+    ): Retrofit {
+        return Retrofit.Builder()
+            .addConverterFactory(converterFactory)
+            .baseUrl(GREENCHECK_API_BASE_URL)
             .callFactory { okHttpClient.get().newCall(it) }
             .build()
     }

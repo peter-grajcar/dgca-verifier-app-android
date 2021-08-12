@@ -37,6 +37,7 @@ import dgca.verifier.app.android.data.local.rules.EngineDatabase
 import dgca.verifier.app.android.data.local.rules.RulesDao
 import dgca.verifier.app.android.data.local.valuesets.DefaultValueSetsLocalDataSource
 import dgca.verifier.app.android.data.local.valuesets.ValueSetsDao
+import dgca.verifier.app.android.data.remote.certificates.CertificatesApiService
 import dgca.verifier.app.android.data.remote.countries.CountriesApiService
 import dgca.verifier.app.android.data.remote.countries.DefaultCountriesRemoteDataSource
 import dgca.verifier.app.android.data.remote.rules.DefaultRulesRemoteDataSource
@@ -60,6 +61,7 @@ import dgca.verifier.app.engine.data.source.valuesets.ValueSetsRepository
 import dgca.verifier.app.engine.domain.rules.DefaultGetRulesUseCase
 import dgca.verifier.app.engine.domain.rules.GetRulesUseCase
 import retrofit2.Retrofit
+import javax.inject.Named
 import javax.inject.Singleton
 
 /**
@@ -94,6 +96,12 @@ object EngineModule {
 
     @Singleton
     @Provides
+    internal fun provideCertificatesApiService(@Named("GreenCheck") retrofit: Retrofit): CertificatesApiService {
+        return retrofit.create(CertificatesApiService::class.java)
+    }
+
+    @Singleton
+    @Provides
     fun provideRulesRemoteDataSource(rulesApiService: RulesApiService): RulesRemoteDataSource =
         DefaultRulesRemoteDataSource(rulesApiService)
 
@@ -117,7 +125,10 @@ object EngineModule {
 
     @Singleton
     @Provides
-    fun provideCertLogicEngine(affectedFieldsDataRetriever: AffectedFieldsDataRetriever, jsonLogicValidator: JsonLogicValidator): CertLogicEngine =
+    fun provideCertLogicEngine(
+        affectedFieldsDataRetriever: AffectedFieldsDataRetriever,
+        jsonLogicValidator: JsonLogicValidator
+    ): CertLogicEngine =
         DefaultCertLogicEngine(affectedFieldsDataRetriever, jsonLogicValidator)
 
     // Dependencies for countries.
